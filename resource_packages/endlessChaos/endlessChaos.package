@@ -1,0 +1,11 @@
+mod = [
+	"endlessChaos"
+]
+
+package = [
+	"resource_packages/endlessChaos/endlessChaos"
+]
+
+lua = [
+	"scripts/mods/endlessChaos/*"
+]
