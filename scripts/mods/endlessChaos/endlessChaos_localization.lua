@@ -7,5 +7,5 @@ return {
 	},
 	journey_endless_chaos_name = {
 		en = "Endless Chaos"
-	}
+	},
 }
