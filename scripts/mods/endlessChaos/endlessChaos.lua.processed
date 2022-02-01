@@ -6,7 +6,29 @@ require("scripts/managers/game_mode/mechanisms/deus_base_graph_generator")
 require("scripts/managers/game_mode/mechanisms/deus_layout_base_graph")
 require("scripts/managers/game_mode/mechanisms/deus_populate_graph")
 
+
+local VERSION = "0.0.3v"
 local base_graphs = require("scripts/settings/dlcs/morris/deus_map_baked_base_graphs")
+local power_up_attribute_adjustments = require("scripts/mods/endlessChaos/power_up_customizations")
+
+local _language_id = Application.user_setting("language_id")
+local localizations = mod:dofile("scripts/mods/endlessChaos/endlessChaos_localization")
+
+mod._quick_localize = function (self, text_id)
+    local mod_localization_table = localizations
+    if mod_localization_table then
+        local text_translations = mod_localization_table[text_id]
+        if text_translations then
+            return text_translations[_language_id] or text_translations["en"]
+        end
+    end
+end
+
+mod:hook("Localize", function(func, text_id)
+    local str = mod:_quick_localize(text_id)
+    if str then return str end
+    return func(text_id)
+end)
 
 base_graphs.journey_endless_chaos = {
 	[0] = {
@@ -41,6 +63,10 @@ base_graphs.journey_endless_chaos = {
 -- important globals -- 
 mod.difficulty = nil
 mod.vanilla_breed_health = {}
+mod.vanilla_breed_walk_speed = {}
+mod.vanilla_breed_run_speed = {}
+mod.vanilla_breed_stagger_resist = {}
+
 mod.loot_tables = {}
 mod.terror_event = mod:dofile("scripts/mods/endlessChaos/endlessChaosPlazaEvent")
 mod.curses = {
@@ -288,8 +314,7 @@ function mod:create_journey_map_settings()
 			"curse_corrupted_flesh"
 		},
 		tzeentch = {
-			"curse_change_of_tzeentch",
-			"curse_egg_of_tzeentch"
+			"curse_change_of_tzeentch"
 		},
 		khorne = {
 			"curse_skulls_of_fury",
@@ -430,8 +455,7 @@ function mod:create_journey_map_settings()
 		},
 		CONFLICT_DIRECTORS = {
 			default = {
-				"deus_skaven_chaos",
-				"deus_skaven_beastmen"
+				"risk_of_rats"
 			}
 		},
 		LEVEL_ALIAS = {
@@ -546,173 +570,71 @@ function mod:create_journey_map_settings()
 end
 
 function mod:ensure_init()
-	mod:echo("ensuring config for endlessChaos")
 	new_journey_name = mod:get_journey_name()
 	journey_created = false
 	for _, journey_name in ipairs(AvailableJourneyOrder) do
-		mod:echo(journey_name)
 		if journey_name == new_journey_name then
 			journey_created = true
 		end
 	end
-	mod:echo(journey_created)
 	if not journey_created then
 		table.insert(AvailableJourneyOrder, new_journey_name)
 	end
 	mod:create_journeys()
 	mod:create_journey_level_settings()
 	mod:create_journey_map_settings()
-	if next(mod.vanilla_breed_health) == nil then
-		for breed_name, breed_data in pairs(Breeds) do
-			local max_health = breed_data.max_health
-			if max_health then
-				mod.vanilla_breed_health[breed_name] = table.clone(max_health)
-			end
+	mod:update_power_up_attributes(power_up_attribute_adjustments)
+	
+	ConflictDirectors.risk_of_rats = {
+		name = "risk_of_rats",
+		debug_color = "orange",
+		disabled = false,
+		locked_func_name = "beastmen",
+		intensity = IntensitySettings.disabled,
+		pacing = PacingSettings.disabled,
+		boss = BossSettings.disabled,
+		specials = SpecialsSettings.disabled,
+		roaming = RoamingSettings.disabled,
+		pack_spawning = PackSpawningSettings.disabled,
+		horde = HordeSettings.challenge_level,
+		description = "risk_of_rats",
+		factions = {
+			"beastmen",
+			"skaven",
+			"chaos"
+		},
+		contained_breeds = {}
+	}
+	local difficulties = Difficulties
+	for i = 1, #difficulties, 1 do
+		local difficulty = difficulties[i]
+		local difficulty_breeds = {}
+
+		ConflictUtils.find_conflict_director_breeds(ConflictDirectors.risk_of_rats, difficulty, difficulty_breeds)
+
+		ConflictDirectors.risk_of_rats.contained_breeds[difficulty] = difficulty_breeds
+	end
+
+	for breed_name, breed_data in pairs(Breeds) do
+		local max_health = breed_data.max_health
+		if max_health then
+			mod.vanilla_breed_health[breed_name] = table.clone(max_health)
 		end
 	end
-	if next(mod.loot_tables) == nil then
-		mod.loot_tables = mod:dofile("scripts/mods/endlessChaos/endless_chaos_pickup_system")
-	end
-end
+	mod.loot_tables = mod:dofile("scripts/mods/endlessChaos/endless_chaos_pickup_system")
+	mod:echo(ConflictDirectors.risk_of_rats.name .. " version: " .. VERSION)
 
-local function is_element_available(element)
-	local conflict_director = Managers.state.conflict
-	local director = ConflictDirectors[conflict_director.initial_conflict_settings]
-	local factions = director.factions
-	local current_difficulty, current_difficulty_tweak = Managers.state.difficulty:get_difficulty_rank()
-
-	if element.minimum_difficulty_tweak and current_difficulty_tweak < element.minimum_difficulty_tweak then
-		return false
-	end
-
-	if element.difficulty_requirement then
-		if current_difficulty < element.difficulty_requirement then
-			return false
-		end
-	elseif element.only_on_difficulty and current_difficulty ~= element.only_on_difficulty then
-		return false
-	end
-
-	if factions and element.faction_requirement then
-		local requirement = element.faction_requirement
-
-		if not table.contains(factions, requirement) then
-			return false
-		end
-	end
-
-	if factions and element.faction_requirement_list then
-		local requirements = element.faction_requirement_list
-
-		for _, requirement in ipairs(requirements) do
-			if not table.contains(factions, requirement) then
-				return false
-			end
-		end
-	end
-
-	return true
-end
-
-local MAX_INJECTION_DEPTH = 10
-
-function mod:mod_process_terror_event_recursive(processed_elements, data, depth, event_name)
-	fassert(depth < MAX_INJECTION_DEPTH, "Injecting terror events lead to high level of recursion, please check if there is a possible loop, or increase MAX_INJECTION_DEPTH.")
-
-	local level_transition_handler = Managers.level_transition_handler
-	local level_key = level_transition_handler:get_current_level_keys()
-	local injected_elements = TerrorEventBlueprints[level_key][event_name] or GenericTerrorEvents[event_name]
-	fassert(injected_elements, "No terror event called '%s', exists. Make sure it is added to level %s, or generic, terror event file if its supposed to be there.", event_name, level_key)
-
-	for _, element in ipairs(injected_elements) do
-		if is_element_available(element) then
-			if element[1] == "inject_event" then
-				local injected_event_name = nil
-
-				if element.event_name_list then
-					local seed, index = Math.next_random(data.seed, 1, #element.event_name_list)
-					injected_event_name = element.event_name_list[index]
-					data.seed = seed
-				else
-					injected_event_name = element.event_name
-				end
-
-				processed_elements = mod:mod_process_terror_event_recursive(processed_elements, data, depth + 1, injected_event_name)
-			else
-				element.base_event_name = event_name
-				processed_elements[#processed_elements + 1] = element
-			end
-		end
-	end
-
-	return processed_elements
-end
-
-function mod:mod_process_terror_event(data, base_event_name)
-	local processed_elements = mod:mod_process_terror_event_recursive({}, data, 0, base_event_name)
-
-	if script_data.debug_terror then
-		print("process_terror_event: " .. table.tostring(processed_elements))
-	end
-
-	return processed_elements
 end
 
 mod.active_level = false
 
-mod:hook(TerrorEventMixer, "start_event", function(func, event_name, data)
-	if script_data.only_allowed_terror_event ~= event_name and script_data.ai_terror_events_disabled then
-		return
-	end
-
-	if data then
-		data.seed = data.seed or 0
-	else
-		data = {
-			seed = 0
-		}
-	end
-
-	print(string.format("TerrorEventMixer.start_event: %s (seed: %d)", event_name, data.seed))
-
-	local seed, _ = Math.next_random(data.seed)
-	data.seed = seed
-	local active_events = TerrorEventMixer.active_events
-	local elements = mod:mod_process_terror_event(data, event_name)
-
-	Managers.state.game_mode:post_process_terror_event(elements)
-
-	if #elements > 0 then
-		local new_event = {
-			index = 1,
-			ends_at = 0,
-			name = event_name,
-			elements = elements,
-			data = data,
-			max_active_enemies = math.huge
-		}
-		active_events[#active_events + 1] = new_event
-		local element = elements[1]
-		local func_name = element[1]
-		local t = Managers.time:time("game")
-
-		TerrorEventMixer.init_functions[func_name](new_event, element, t)
-	end
-
+mod:hook_safe(TerrorEventMixer, "start_event", function(event_name, data)
 	if event_name == "plaza_wave_1" then
 		mod.active_level = true
 		current_difficulty, current_difficulty_tweak = Managers.state.difficulty:get_difficulty()
 		mod.difficulty = current_difficulty
 	end
-	Managers.telemetry.events:terror_event_started(event_name)
-	
-
 end)
-
-mod:hook_safe(DeusRunController, "setup_run", function(self, run_seed, difficulty, journey_name, dominant_god, initial_own_soft_currency, telemetry_id)
-	self._path_graph["final"]["run_progress"] = .9999999
-end)
-
 
 -- ENEMY SCALING STUFF --
 mod.difficulty_tier = {
@@ -771,7 +693,7 @@ mod:hook_safe(StateIngame, "on_enter", function(func, self)
 end)
 
 mod.time_started = false
-mod.interval = 60
+mod.interval = 30
 mod.scaling = 1.0
 mod.last_interval = 0
 
@@ -781,30 +703,73 @@ mod.update = function(dt)
 		if t and t - mod.last_interval >= mod.interval * mod.difficulty_tier[mod.difficulty].time_interval then
 			-- Could do t here but i like a nice number
 			mod.last_interval = mod.last_interval + mod.interval * mod.difficulty_tier[mod.difficulty].time_interval
-			mod:echo("scaling enemy")
 			mod:scale_enemies_with_time()
 		end
 	end
 end
 
-local function scale_breed_health()
-	for breed_name, breed_data in pairs(Breeds) do
-		local max_health = breed_data.max_health
-		if max_health then
-			mod.vanilla_breed_health[breed_name] = table.clone(max_health)
+mod:hook(DamageUtils, "calculate_damage", function(func, damage_output, target_unit, attacker_unit, hit_zone_name,
+	original_power_level, boost_curve, boost_damage_multiplier, is_critical_strike, damage_profile, target_index, backstab_multiplier, damage_source)
+		local dmg = func(damage_output, target_unit, attacker_unit, hit_zone_name, original_power_level,
+		boost_curve, boost_damage_multiplier, is_critical_strike, damage_profile, target_index, backstab_multiplier, damage_source)
+	
+		if target_is_hero and mod.active_level then
+			dmg = dmg * mod.scaling
+		end
+	
+		return dmg
+end)
 
-			for i, health in ipairs(max_health) do
-				max_health[i] = math.clamp(health * mod.scaling, 0, 8100)
+local function networkify_health(health_amount)
+	health_amount = math.clamp(health_amount, 0, 8191.5)
+	local decimal = health_amount % 1
+	local rounded_decimal = math.round(decimal * 4) * 0.25
+
+	return math.floor(health_amount) + rounded_decimal
+end
+
+local function scale_breeds(scaling)
+	for breed_name, breed_data in pairs(Breeds) do
+		if breed_data.race ~= "critter" then
+			local max_health = breed_data.max_health
+			local new_max_health = 0
+			if max_health then
+				for i, health in ipairs(max_health) do
+					if breed_name == "chaos_warrior" then
+						mod:echo("health: " .. health)
+						mod:echo("modifier: " .. scaling)
+					max_health[i] = networkify_health(health * scaling)
+				end
 			end
+			local run_speed = breed_data.run_speed
+			local walk_speed = breed_data.walk_speed
+			if run_speed and walk_speed then
+				walk_speed = walk_speed * (1 + scaling)
+				run_speed = run_speed * (1 + scaling)
+			end
+			local stagger_resistance = breed_data.stagger_resistance
+			if stagger_resistance and not breed_data.boss then
+				new_stagger = stagger_resistance * (1 + scaling)
+				if new_stagger > 90 then
+					new_stagger = 90
+				end
+				stagger_resistance = new_stagger
+			end
+			
 		end
 	end
+	new_chaos_stats = Breeds["chaos_warrior"]
+	mod:echo(new_chaos_stats.run_speed)
 end
 
 function mod:scale_enemies_with_time()
-	mod.scaling = mod.scaling + 0.17
-	scale_breed_health(mod.scaling)
+	mod.scaling = mod.scaling + 0.15
+	scale_breeds(mod.scaling)
 end
 
+mod:hook_safe(DeusRunController, "setup_run", function(self, run_seed, difficulty, journey_name, dominant_god, initial_own_soft_currency, telemetry_id)
+	self._path_graph["final"]["run_progress"] = .9999999
+end)
 
 -- POWER UP STUFF --
 local AllPickups = AllPickups
@@ -814,9 +779,8 @@ function mod:update_power_up_attributes(power_ups)
 	DeusPowerUpTemplates = DeusPowerUpTemplates or {}
 	for power_up_name, power_up_settings in pairs(power_ups) do
 		if DeusPowerUpTemplates[power_up_name] then
-			local power_up_template = DeusPowerUpTemplates[power_up.name]
 			for power_up_attribute, power_up_value in pairs(power_up_settings) do
-				power_up_template[power_up_attribute] = power_up_value
+				DeusPowerUpTemplates[power_up_attribute] = power_up_value
 			end
 		end
 	end
@@ -825,10 +789,6 @@ end
 function mod:add_pickup_template(pickup_name, pickup_data)
 	local pickup_already_exists = rawget(AllPickups, pickup_name)
 	local item_name = pickup_name
-	local item_already_exists = rawget(ItemMasterList, item_name)
-	if item_already_exists and pickup_already_exists then
-		return
-	end
 	AllPickups[pickup_name] = pickup_data
 	local index = #NetworkLookup.pickup_names + 1
 	NetworkLookup.pickup_names[index] = pickup_name
@@ -843,8 +803,16 @@ function mod:add_pickup_template(pickup_name, pickup_data)
 	NetworkLookup.item_names[item_name] = item_name_index
 end
 
+local total_rolls = 0
+local drops = 0
 local function rollLootDrop(percent)
-	return percent >= math.random(1, 1000)
+	total_rolls = total_rolls + 1
+	drop = percent >= math.random(1, 1000)
+	if drop then
+		drops = drops + 1
+		mod:echo(drops .. "/" .. total_rolls .. " drops")
+	end
+	return drop
 end
 
 local function should_spawn_item(loot_table)
@@ -884,7 +852,7 @@ local function get_spawn_chance(breed)
 	return false
 end 
 
-mod:hook(DeathSystem, "kill_unit", function(func, self, unit, killing_blow)
+mod:hook_safe(DeathReactions.templates.ai_default.unit, "start", function(unit)
 	if mod.active_level then
 		mod:pcall(function()
 			local breed_killed = Unit.get_data(unit, "breed")
@@ -911,11 +879,9 @@ mod:hook(DeathSystem, "kill_unit", function(func, self, unit, killing_blow)
 			end
 		end)
 	end
-	
-	func(self, unit, killing_blow)
 end)
 
-local function get_random_buff(_deus_run_controller, tier, player_unit)
+local function get_random_buff(_deus_run_controller, tier)
 	local power_up = nil
 	local current_node = _deus_run_controller:get_current_node()
 	local res = ""
@@ -923,46 +889,52 @@ local function get_random_buff(_deus_run_controller, tier, player_unit)
 		res = res .. string.char(math.random(97, 122))
 	end
 	local seed = HashUtils.fnv32_hash(res .. "_" .. current_node.weapon_pickup_seed)
+
 	if tier == "stats" then
+		mod:echo("getting stat buff")
 		power_up = _deus_run_controller:generate_random_power_ups(1, DeusPowerUpAvailabilityTypes.terror_event, seed)
 	else
 		power_up = _deus_run_controller:generate_random_power_ups(1, DeusPowerUpAvailabilityTypes.cursed_chest, seed)
-	end
-	for _, power_up in ipairs(power_up) do
-		mod:echo(power_up.name)
-	end
+	end	
+
 	if power_up then
-		mod:echo(power_up[0])
-		return power_up[0]
+		mod:echo("Random buff rarity: " .. tier .. " " .. power_up[1].name)
+		return power_up[1]
 	end
 end
 
+local REAL_PLAYER_LOCAL_ID = 1
+
 local function give_power_up(_deus_run_controller, power_up, player_unit)
-	player_unit_id = player_unit:local_player_id()
-	_deus_run_controller:add_power_ups({
+	local run_controller = _deus_run_controller
+
+	run_controller:add_power_ups({
 		power_up
-	}, player_unit_id)
+	}, REAL_PLAYER_LOCAL_ID)
 
 	local buff_system = Managers.state.entity:system("buff_system")
 	local talent_interface = Managers.backend:get_talents_interface()
 	local deus_backend = Managers.backend:get_interface("deus")
-	local own_peer_id = _deus_run_controller:get_own_peer_id()
-	local profile_index, career_index = _deus_run_controller:get_player_profile(own_peer_id, player_unit_id)
+	local own_peer_id = run_controller:get_own_peer_id()
+
+	local profile_index, career_index = run_controller:get_player_profile(own_peer_id, REAL_PLAYER_LOCAL_ID)
+
 	DeusPowerUpUtils.activate_deus_power_up(power_up, buff_system, talent_interface, deus_backend, run_controller, player_unit, profile_index, career_index)
-	mod:echo("Granted power up " .. power_up.name)
 end
 
-function mod:apply_buff(tier, player_unit)
+function mod:apply_buff(tier, player)
 	_deus_run_controller = Managers.mechanism:game_mechanism():get_deus_run_controller()
-
-	power_up = get_random_buff(_deus_run_controller, tier, player)
-	mod
-	if power_up then 
+	player_unit = player.player_unit
+	power_up = get_random_buff(_deus_run_controller, tier)
+	if power_up then
 		give_power_up(_deus_run_controller, power_up, player_unit)
-		return
+		Managers.state.event:trigger("present_rewards", {
+			{
+				type = "deus_power_up",
+				power_up = power_up
+			}
+		})
 	end
 end
-
-
 
 mod:ensure_init()
