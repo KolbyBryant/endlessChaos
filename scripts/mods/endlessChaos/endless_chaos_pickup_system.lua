@@ -19,12 +19,12 @@ LootTables.unique = {
 }
 
 LootTables.rare = {
-	rare = 20,
-	stats = 100
+	rare = 10,
+	stats = 25
 }
 
 LootTables.stats = {
-	stats = 50
+	stats = 10
 }
 
 Pickups = Pickups

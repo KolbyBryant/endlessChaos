@@ -7,9 +7,9 @@ require("scripts/managers/game_mode/mechanisms/deus_layout_base_graph")
 require("scripts/managers/game_mode/mechanisms/deus_populate_graph")
 
 
-local VERSION = "0.0.3v"
+local VERSION = "0.0.4v"
 local base_graphs = require("scripts/settings/dlcs/morris/deus_map_baked_base_graphs")
-local power_up_attribute_adjustments = require("scripts/mods/endlessChaos/power_up_customizations")
+local power_up_attribute_adjustments = mod:dofile("scripts/mods/endlessChaos/power_up_customizations")
 
 local _language_id = Application.user_setting("language_id")
 local localizations = mod:dofile("scripts/mods/endlessChaos/endlessChaos_localization")
@@ -29,11 +29,6 @@ mod:hook("Localize", function(func, text_id)
     if str then return str end
     return func(text_id)
 end)
-
--- SYSTEM CLASS --
-EndlessChaosSystem = class(EndlessChaosSystem)
-
-EndlessChaosSystem.init
 
 base_graphs.journey_endless_chaos = {
 	[0] = {
@@ -105,6 +100,39 @@ local theme_packages_lookup = {
 
 function mod:get_journey_name()
 	return "journey_endless_chaos"
+end
+
+mod:hook(DeusMechanism, "get_loading_tip", function (func, self)
+	if self._deus_run_controller and self._deus_run_controller:get_journey_name() == mod:get_journey_name() then
+		return "risk_of_rats_desc"
+	end
+	local loading_tips_file = DLCSettings.morris.loading_tips_file
+	local loading_tips = local_require(loading_tips_file)
+	local theme = self:get_current_node_theme()
+	local themed_tips = loading_tips[theme] or loading_tips.general
+
+	if self._state == MAP_STATE then
+		themed_tips = loading_tips.general
+	end
+
+	local random_index = math.random(1, #themed_tips)
+	local loading_tip = themed_tips[random_index]
+
+	return loading_tip
+end)
+
+
+-- SYSTEM CLASS --
+EndlessChaosMechanism = class(EndlessChaosMechanism)
+EndlessChaosMechanism.name = "Risk of Rats"
+EndlessChaosMechanism.init = function(self, run_controller, active_monsters, active_mutators, active_arena, difficulty, risk_of_rats_active, start_timer)
+	self._run_controller = run_controller
+	self._active_monsters = active_monsters
+	self._active_mutators = active_mutators
+	self._active_arena = active_arena
+	self._difficulty = difficulty
+	self._risk_of_rats_active = risk_of_rats_active
+	self._start_timer = start_timer
 end
 
 function mod:create_journeys()
@@ -715,6 +743,8 @@ mod:hook_safe(StateIngame, "on_enter", function(func, self)
 			end
 		end
 		mod.active_level = false
+		mod.interval = 30
+		mod.last_interval = 0
 	end
 end)
 
@@ -746,14 +776,18 @@ mod:hook(DamageUtils, "calculate_damage", function(func, damage_output, target_u
 	original_power_level, boost_curve, boost_damage_multiplier, is_critical_strike, damage_profile, target_index, backstab_multiplier, damage_source)
 		local dmg = func(damage_output, target_unit, attacker_unit, hit_zone_name, original_power_level,
 		boost_curve, boost_damage_multiplier, is_critical_strike, damage_profile, target_index, backstab_multiplier, damage_source)
-	
-		if target_is_hero and mod.active_level then
-			mod:echo(dmg)
-			dmg = dmg * (1 + get_scaling())
-			mod:echo("new dmg: ")
-			mod:echo(dmg)
+		
+		if target_unit then
+			breed = AiUtils.unit_breed(target_unit)
+			local target_is_hero = breed and breed.is_hero
+			if target_is_hero and mod.active_level then
+				mod:echo(dmg)
+				dmg = dmg * (get_scaling())
+				mod:echo("new dmg: ")
+				mod:echo(dmg)
+			end
 		end
-	
+		
 		return dmg
 end)
 
@@ -837,6 +871,7 @@ end
 
 local total_rolls = 0
 local drops = 0
+
 local function rollLootDrop(percent)
 	total_rolls = total_rolls + 1
 	drop = percent >= math.random(1, 1000)
@@ -923,14 +958,12 @@ local function get_random_buff(_deus_run_controller, tier)
 	local seed = HashUtils.fnv32_hash(res .. "_" .. current_node.weapon_pickup_seed)
 
 	if tier == "stats" then
-		mod:echo("getting stat buff")
-		power_up = _deus_run_controller:generate_random_power_ups(1, DeusPowerUpAvailabilityTypes.terror_event, seed)
+		power_up = _deus_run_controller:generate_random_power_ups(1, DeusPowerUpAvailabilityTypes.risk_of_rats_stats, seed)
 	else
 		power_up = _deus_run_controller:generate_random_power_ups(1, DeusPowerUpAvailabilityTypes.cursed_chest, seed)
 	end	
 
 	if power_up then
-		mod:echo("Random buff rarity: " .. tier .. " " .. power_up[1].name)
 		return power_up[1]
 	end
 end
@@ -1013,4 +1046,15 @@ if is_server then
 end
 
 
+stats.tier 
+
+attack_speed
+crit_chance
+health
+stamina_recovery
+block_cost_reduction
+movement_speed
+stamina
+
+resetting doesn't start scaling again
 ]]--

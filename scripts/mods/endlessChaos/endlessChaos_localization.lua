@@ -17,6 +17,11 @@ return {
 	risk_of_rats = {
 		en = "Ratapalooza"
 	},
+	risk_of_rats_desc = {
+		en = [[ Welcome to Risk of Rats! 
+		Your enemies grow stronger with each passing minute. 
+		Slay rats to collect power up drops, coordinate with your team to navigate constantly changing mutators, and fight with honor in the last stand against the Skaven hordes!]]
+	},
 	--pickups
 	endless_chaos_buff_pickup_stats ={
 		en = "Stat Buff"

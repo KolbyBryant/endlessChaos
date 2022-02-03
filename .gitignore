@@ -45,7 +45,7 @@ luac.out
 *.userosscache
 *.sln.docstates
 
-.vs\
+.vs\*
 *.sqlite
 .vs/endlessChaos/v16/.suo
 .vs/endlessChaos/v16/.suo
@@ -53,3 +53,4 @@ luac.out
 .vs/VSWorkspaceState.json
 bundleV2/9a0ba06bf7233901.mod_bundle
 bundleV2/endlessChaos.mod
+*.processed
